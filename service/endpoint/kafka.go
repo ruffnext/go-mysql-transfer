@@ -18,14 +18,16 @@
 package endpoint
 
 import (
-	"github.com/siddontang/go-mysql/canal"
 	"log"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/go-mysql-org/go-mysql/canal"
+
+	"github.com/IBM/sarama"
+	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/juju/errors"
-	"github.com/siddontang/go-mysql/mysql"
 
 	"go-mysql-transfer/global"
 	"go-mysql-transfer/metrics"
@@ -48,7 +50,9 @@ func newKafkaEndpoint() *KafkaEndpoint {
 
 func (s *KafkaEndpoint) Connect() error {
 	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V0_10_0_0 // required for ProducerMessage.Timestamp support
 	cfg.Producer.Partitioner = sarama.NewRandomPartitioner
+	cfg.Producer.Return.Errors = true
 
 	if global.Cfg().KafkaSASLUser != "" && global.Cfg().KafkaSASLPassword != "" {
 		cfg.Net.SASL.Enable = true
@@ -73,6 +77,14 @@ func (s *KafkaEndpoint) Connect() error {
 	s.producer = producer
 	s.client = client
 
+	// Drain the errors channel asynchronously; an undrained channel will
+	// eventually block the producer when its buffer fills up.
+	go func() {
+		for pe := range producer.Errors() {
+			logs.Errorf("kafka async producer error: topic=%s, err=%v", pe.Msg.Topic, pe.Err)
+		}
+	}()
+
 	return nil
 }
 
@@ -81,6 +93,7 @@ func (s *KafkaEndpoint) Ping() error {
 }
 
 func (s *KafkaEndpoint) Consume(from mysql.Position, rows []*model.RowRequest) error {
+	logs.Infof("kafka Consume: 收到 %d 条数据", len(rows))
 	var ms []*sarama.ProducerMessage
 	for _, row := range rows {
 		rule, _ := global.RuleIns(row.RuleKey)
@@ -107,13 +120,10 @@ func (s *KafkaEndpoint) Consume(from mysql.Position, rows []*model.RowRequest) e
 		}
 	}
 
+	logs.Infof("kafka Consume: 构建消息 %d 条，准备发送", len(ms))
 	for _, m := range ms {
+		logs.Infof("kafka Consume: 发送 topic=%s", m.Topic)
 		s.producer.Input() <- m
-		select {
-		case err := <-s.producer.Errors():
-			return err
-		default:
-		}
 	}
 
 	logs.Infof("处理完成 %d 条数据", len(rows))
@@ -205,12 +215,13 @@ func (s *KafkaEndpoint) buildMessages(row *model.RowRequest, rule *global.Rule) 
 func (s *KafkaEndpoint) buildMessage(row *model.RowRequest, rule *global.Rule) (*sarama.ProducerMessage, error) {
 	kvm := rowMap(row, rule, false)
 	resp := new(model.MQRespond)
-	resp.Action = row.Action
-	resp.Timestamp = row.Timestamp
+	resp.Action = strings.ToUpper(row.Action)
+	resp.Table = rule.Table
+	resp.Timestamp = int64(row.Timestamp) * 1000
 	if rule.ValueEncoder == global.ValEncoderJson {
-		resp.Date = kvm
+		resp.Data = kvm
 	} else {
-		resp.Date = encodeValue(rule, kvm)
+		resp.Data = encodeValue(rule, kvm)
 	}
 
 	if rule.ReserveRawData && canal.UpdateAction == row.Action {
@@ -222,8 +233,9 @@ func (s *KafkaEndpoint) buildMessage(row *model.RowRequest, rule *global.Rule) (
 		return nil, err
 	}
 	m := &sarama.ProducerMessage{
-		Topic: rule.KafkaTopic,
-		Value: sarama.ByteEncoder(body),
+		Topic:     rule.KafkaTopic,
+		Value:     sarama.ByteEncoder(body),
+		Timestamp: time.Unix(int64(row.Timestamp), 0),
 	}
 	logs.Infof("topic: %s, message: %s", rule.KafkaTopic, string(body))
 	return m, nil

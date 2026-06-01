@@ -32,8 +32,14 @@ func Start() error {
 
 	statics := "statics"
 	index := path.Join(statics, "index.html")
-	g.Static("/statics", statics)
 	g.LoadHTMLFiles(index)
+
+	// Register each static subdirectory at the root level so that
+	// index.html can reference assets with paths like /lib/..., /css/..., etc.
+	for _, dir := range []string{"lib", "css", "js", "images", "page", "api"} {
+		g.Static("/"+dir, path.Join(statics, dir))
+	}
+
 	g.GET("/", webAdminFunc)
 
 	port := global.Cfg().WebAdminPort

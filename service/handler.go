@@ -20,12 +20,13 @@ package service
 import (
 	"go-mysql-transfer/metrics"
 	"log"
+	"sync"
 	"time"
 
+	"github.com/go-mysql-org/go-mysql/canal"
+	"github.com/go-mysql-org/go-mysql/mysql"
+	"github.com/go-mysql-org/go-mysql/replication"
 	"github.com/juju/errors"
-	"github.com/siddontang/go-mysql/canal"
-	"github.com/siddontang/go-mysql/mysql"
-	"github.com/siddontang/go-mysql/replication"
 
 	"go-mysql-transfer/global"
 	"go-mysql-transfer/model"
@@ -33,23 +34,32 @@ import (
 )
 
 type handler struct {
-	queue chan interface{}
-	stop  chan struct{}
+	queue    chan interface{}
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 func newHandler() *handler {
 	return &handler{
 		queue: make(chan interface{}, 4096),
-		stop:  make(chan struct{}, 1),
+		stop:  make(chan struct{}),
+	}
+}
+
+// enqueue sends v to the queue, but returns immediately if stop is signaled.
+func (s *handler) enqueue(v interface{}) {
+	select {
+	case s.queue <- v:
+	case <-s.stop:
 	}
 }
 
 func (s *handler) OnRotate(e *replication.RotateEvent) error {
-	s.queue <- model.PosRequest{
+	s.enqueue(model.PosRequest{
 		Name:  string(e.NextLogName),
 		Pos:   uint32(e.Position),
 		Force: true,
-	}
+	})
 	return nil
 }
 
@@ -62,20 +72,20 @@ func (s *handler) OnTableChanged(schema, table string) error {
 }
 
 func (s *handler) OnDDL(nextPos mysql.Position, _ *replication.QueryEvent) error {
-	s.queue <- model.PosRequest{
+	s.enqueue(model.PosRequest{
 		Name:  nextPos.Name,
 		Pos:   nextPos.Pos,
 		Force: true,
-	}
+	})
 	return nil
 }
 
 func (s *handler) OnXID(nextPos mysql.Position) error {
-	s.queue <- model.PosRequest{
+	s.enqueue(model.PosRequest{
 		Name:  nextPos.Name,
 		Pos:   nextPos.Pos,
 		Force: false,
-	}
+	})
 	return nil
 }
 
@@ -115,7 +125,7 @@ func (s *handler) OnRow(e *canal.RowsEvent) error {
 			requests = append(requests, v)
 		}
 	}
-	s.queue <- requests
+	s.enqueue(requests)
 
 	return nil
 }
@@ -163,6 +173,7 @@ func (s *handler) startListener() {
 				case []*model.RowRequest:
 					requests = append(requests, v...)
 					needFlush = int64(len(requests)) >= global.Cfg().BulkSize
+					logs.Infof("listener: 队列收到 %d 行，缓冲共 %d 行", len(v), len(requests))
 				}
 			case <-ticker.C:
 				needFlush = true
@@ -171,8 +182,10 @@ func (s *handler) startListener() {
 			}
 
 			if needFlush && len(requests) > 0 && _transferService.endpointEnable.Load() {
+				logs.Infof("listener: flush %d 条数据到 endpoint", len(requests))
 				err := _transferService.endpoint.Consume(from, requests)
 				if err != nil {
+					logs.Errorf("listener: endpoint.Consume 失败，endpointEnable 置为 false: %v", err)
 					_transferService.endpointEnable.Store(false)
 					metrics.SetDestState(metrics.DestStateFail)
 					logs.Error(err.Error())
@@ -195,5 +208,5 @@ func (s *handler) startListener() {
 
 func (s *handler) stopListener() {
 	log.Println("transfer stop")
-	s.stop <- struct{}{}
+	s.stopOnce.Do(func() { close(s.stop) })
 }

@@ -18,12 +18,13 @@
 package endpoint
 
 import (
-	"github.com/siddontang/go-mysql/canal"
 	"log"
 	"strconv"
 
+	"github.com/go-mysql-org/go-mysql/canal"
+
+	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/juju/errors"
-	"github.com/siddontang/go-mysql/mysql"
 	"github.com/streadway/amqp"
 
 	"go-mysql-transfer/global"
@@ -196,11 +197,11 @@ func (s *RabbitEndpoint) doRuleConsume(req *model.RowRequest, rule *global.Rule)
 
 	resp := new(model.MQRespond)
 	resp.Action = req.Action
-	resp.Timestamp = req.Timestamp
+	resp.Timestamp = int64(req.Timestamp) * 1000
 	if rule.ValueEncoder == global.ValEncoderJson {
-		resp.Date = kvm
+		resp.Data = kvm
 	} else {
-		resp.Date = encodeValue(rule, kvm)
+		resp.Data = encodeValue(rule, kvm)
 	}
 
 	if rule.ReserveRawData && canal.UpdateAction == req.Action {

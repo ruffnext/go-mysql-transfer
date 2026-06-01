@@ -19,17 +19,18 @@ package endpoint
 
 import (
 	"context"
-	"github.com/siddontang/go-mysql/canal"
 	"log"
 	"strings"
 	"sync"
+
+	"github.com/go-mysql-org/go-mysql/canal"
 
 	"github.com/apache/rocketmq-client-go/v2"
 	"github.com/apache/rocketmq-client-go/v2/primitive"
 	"github.com/apache/rocketmq-client-go/v2/producer"
 	"github.com/apache/rocketmq-client-go/v2/rlog"
+	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/juju/errors"
-	"github.com/siddontang/go-mysql/mysql"
 
 	"go-mysql-transfer/global"
 	"go-mysql-transfer/metrics"
@@ -113,7 +114,7 @@ func (s *RocketEndpoint) Consume(from mysql.Position, rows []*model.RowRequest) 
 		}
 	}
 
-	if len(ms) ==0{
+	if len(ms) == 0 {
 		return nil
 	}
 
@@ -233,11 +234,11 @@ func (s *RocketEndpoint) buildMessage(req *model.RowRequest, rule *global.Rule) 
 	kvm := rowMap(req, rule, false)
 	resp := new(model.MQRespond)
 	resp.Action = req.Action
-	resp.Timestamp = req.Timestamp
+	resp.Timestamp = int64(req.Timestamp) * 1000
 	if rule.ValueEncoder == global.ValEncoderJson {
-		resp.Date = kvm
+		resp.Data = kvm
 	} else {
-		resp.Date = encodeValue(rule, kvm)
+		resp.Data = encodeValue(rule, kvm)
 	}
 
 	if rule.ReserveRawData && canal.UpdateAction == req.Action {

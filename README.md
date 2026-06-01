@@ -2,6 +2,8 @@
 
 # 简介
 
+> Fork from https://github.com/wj596/go-mysql-transfer.git
+
 go-mysql-transfer是一款MySQL数据库实时增量同步工具。
 
 能够监听MySQL二进制日志(Binlog)的变动，将变更内容形成指定格式的消息，实时发送到接收端。从而在数据库和接收端之间形成一个高性能、低延迟的增量数据同步更新管道。
@@ -165,9 +167,9 @@ server_id=1 # 配置 MySQL replaction 需要定义，不要和 go-mysql-transfer
 
 # 感谢
 
-* [go-mysql](github.com/siddontang/go-mysql)
+* [go-mysql](github.com/go-mysql-org/go-mysql)
 
-* [go-mysql-elasticsearch](https://github.com/siddontang/go-mysql-elasticsearch)
+* [go-mysql-elasticsearch](https://github.com/go-mysql-org/go-mysql-elasticsearch)
 
 * [go-redis](https://github.com/go-redis/redis)
 
@@ -202,3 +204,7 @@ server_id=1 # 配置 MySQL replaction 需要定义，不要和 go-mysql-transfer
 
 **v1.0.4 release**
 * 修复了 -position 命令，binlog 名称验证问题
+
+**v1.0.5 dev**
+* 更新了部分依赖库版本，修复由于依赖和编译器版本不匹配导致的panic
+* 修复了程序无法正确监听 ctrl+c 信号，导致无法正常退出的问题

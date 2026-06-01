@@ -29,9 +29,10 @@ var redisRespondPool = sync.Pool{
 type MQRespond struct {
 	Topic     string      `json:"-"`
 	Action    string      `json:"action"`
-	Timestamp uint32      `json:"timestamp"`
+	Table     string      `json:"table"`
+	Timestamp int64       `json:"timestamp"`
 	Raw       interface{} `json:"raw,omitempty"`
-	Date      interface{} `json:"date"`
+	Data      interface{} `json:"data"`
 	ByteArray []byte      `json:"-"`
 }
 
